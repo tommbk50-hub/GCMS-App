@@ -1,7 +1,0 @@
-streamlit
-rdkit>=2023.9.5
-matplotlib
-mpld3
-pandas
-adjustText
-numpy<2.0.0
