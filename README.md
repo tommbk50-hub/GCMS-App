@@ -1,2 +1,1 @@
-# Cheminformatic-App
-An app for molecule design
+# Automated HPLC-GCMS Python Notebook using AI. 
