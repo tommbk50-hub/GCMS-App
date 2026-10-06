@@ -19,5 +19,6 @@ You are an expert in Python, Cheminformatics, Mass Spectrometry (LC-MS/GC-MS), a
 
 ## Coding Style
 - Write clean, documented Python code with type hinting where possible.
+- Each new code cell begins with the '@title' heading, summarising what the cell does. 
 - When modifying the peak fitting hyperparameter optimization, ensure the elbow/L-curve test logic remains intact.
 - Handle API rate limits and potential 503 errors gracefully (especially for Gemini and NCI CACTUS queries).
