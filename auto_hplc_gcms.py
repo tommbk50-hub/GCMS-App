@@ -1128,11 +1128,21 @@ else:
                 anchors = [e for e in final_evidence if e['is_intact']]
                 fragments = [e for e in final_evidence if not e['is_intact']]
 
-                anchor_str = "\n".join([f"- m/z {e['mz']}: {e['name']} (diff: {e['actual_diff']:.4f})" for e in anchors]) or "None detected"
-                frag_str = "\n".join([f"- m/z {e['mz']}: {e['name']} (diff: {e['actual_diff']:.4f})" for e in fragments]) or "None detected"
+                final_evidence = anchors + fragments
+                ev_max_int = max(e['intensity'] for e in final_evidence) or 1.0
+
+                def _ion_line(idx, e):
+                    return (f"- ION {idx}: m/z {e['mz']}: {e['name']} (diff: {e['actual_diff']:.4f}, "
+                            f"relative intensity: {100 * e['intensity'] / ev_max_int:.1f}% of strongest assigned ion, "
+                            f"{100 * e['intensity'] / max_intensity:.1f}% of base peak, "
+                            f"theoretical natural abundance: {e['abund']}%)")
+
+                anchor_str = "\n".join([_ion_line(i + 1, e) for i, e in enumerate(anchors)]) or "None detected"
+                frag_str = "\n".join([_ion_line(len(anchors) + i + 1, e) for i, e in enumerate(fragments)]) or "None detected"
+                n_ions = len(final_evidence)
 
                 prompt = f"""
-                You are an expert analytical chemist verifying a single species assignment for an LC-MS peak.
+                You are an expert mass spectrometrist verifying a single species assignment for an LC-MS peak.
 
                 Target Molecule SMILES: {win_smiles}
 
@@ -1148,22 +1158,33 @@ else:
                 3. Evaluate the fragmented ion adducts ONLY as secondary evidence to back up the intact assignment.
                 4. Do NOT reject an assignment because some fragments are complex or rare, provided the intact parent mass anchors the identity.
 
-                Return EXACTLY two lines:
+                5. For EACH ion individually, act as an expert mass spectrometrist and write a rationale SPECIFIC to that ion's adduct/isotopologue type (e.g. [M+H]+ vs [M+Na]+ vs [M+H]+ (+1 13C) must have different explanations). Comment on:
+                   - Its observed relative intensity versus what is expected (e.g. the 13C isotope intensity relative to its monoisotopic parent should roughly match the theoretical natural abundance; sodium adducts are typically weaker than protonated ions in acidic mobile phases unless Na+ is abundant).
+                   - The probability/plausibility of the assignment given the other ions present. Isotopologues or minor adducts found WITHOUT their monoisotopic parent (e.g. [M+H]+ (+1 17O) without [M+H]+), or with intensities far exceeding their theoretical natural abundance, are improbable and should be flagged as likely coincidental matches or interferences.
+                   - Its mass error.
+
+                Return EXACTLY {n_ions + 2} lines:
                 Line 1: ONLY the word "VERIFIED" or "REJECTED".
-                Line 2: A brief rationale starting with how the intact mass confirms the assignment, followed by how the fragments support it.
+                Line 2: A brief overall rationale for the assignment.
+                Then one line per ion, in order, formatted exactly as "ION <n>: <ion-specific rationale incl. a probability of High/Medium/Low>" for n = 1 to {n_ions}.
                 """
+                ion_rationales = {}
                 try:
                     res = client.models.generate_content(model=active_model, contents=prompt, config=search_config)
                     lines = [line.strip() for line in res.text.strip().split('\n') if line.strip()]
                     status = lines[0].replace('*', '').upper() if len(lines) > 0 else "REJECTED"
                     rationale = lines[1] if len(lines) > 1 else "No explanation provided."
+                    for line in lines[2:]:
+                        m = re.match(r"^[\-\*\s]*ION\s*(\d+)\s*[:\-]\s*(.+)$", line.replace('**', ''), re.IGNORECASE)
+                        if m:
+                            ion_rationales[int(m.group(1))] = m.group(2).strip()
                 except Exception as e:
                     if "503 UNAVAILABLE" in str(e):
                         status, rationale = "ERROR", "API unavailable due to high demand. Please try re-running the cell."
                     else:
                         status, rationale = "ERROR", str(e)
 
-                for e in final_evidence:
+                for ion_idx, e in enumerate(final_evidence, start=1):
                     row = task.copy()
                     row.update({
                         "Calculated m/z": f"{e['calc_mz']:.4f}",
@@ -1172,7 +1193,7 @@ else:
                         "Identified Adduct": e['name'],
                         "Natural Abundance (%)": e['abund'],
                         "Verification Status": status,
-                        "Agent Rationale": f"[Hierarchical Profile] {rationale}"
+                        "Agent Rationale": ion_rationales.get(ion_idx, f"[Hierarchical Profile] {rationale}")
                     })
                     row.pop("Spectrum", None)
                     out_rows.append(row)
